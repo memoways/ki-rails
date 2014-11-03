@@ -5,6 +5,134 @@ require 'multi_json'
 
 class KiCompiler
 
+  def initialize
+    context = V8::Context.new
+
+    context.eval %Q{
+      this.__modules = {};
+      this.__loaded = {};
+      this.__specs = {};
+      this.__texts = {};
+      this.__define = function (name, deps, factory) {
+        __specs[name] = ({ deps: deps, factory: factory });
+      }
+    }
+
+    parse(context, "ki")
+    round = 1
+    spec_count = context.eval("this.__specs").count
+
+    while true do
+      parse_step(context)
+
+      new_spec_count = context.eval("this.__specs").count
+      break if new_spec_count == spec_count
+      spec_count = new_spec_count
+
+      puts "\n========== Round #{round} ==============="
+      print_specs(context)
+      round = round + 1
+    end
+
+    puts "Should now bless all those specs."
+
+    context.eval %Q{
+      Object.keys(this.__specs).forEach(function (name) {
+        __modules[name] = {};
+      });
+    }
+
+    bless(context, "ki")
+
+    # load source map support too.
+    context.eval(%Q{
+        this.window = this;
+                 })
+
+    context.load(resource_path("source-map.js"));
+
+    context.eval(%Q{
+        delete this.window;
+                 })
+
+    @ki_core = File.read(resource_path("ki.sjs"))
+    @context = context
+  end
+
+  def compile(source, options = {})
+    pathname = options[:pathname]
+
+    # macros can be defined anywhere in required files, but
+    # they must be available, so Sweet.js has to parse them.
+    # Yes, even in development where Sprockets serves separate files.
+    macros_source = if options[:dependencies]
+                      options[:dependencies].map { |x| File.read(x) }.join("\n")
+                    else
+                      source
+                    end
+
+    # no source map support? too bad.
+    return _ki_compile(source, macros_source)[:code] if pathname.nil?
+
+    # gleefully stolen from https://github.com/markbates/coffee-rails-source-maps
+    clean_name = pathname.basename.to_s.split(".").first
+
+    rel_path = if pathname.to_s.start_with?(Bundler.bundle_path.to_s)
+                  Pathname('bundler').join(pathname.relative_path_from(Bundler.bundle_path)).dirname
+                else
+                  pathname.relative_path_from(Rails.root).dirname
+                end
+
+    # don't forget to gitignore that!
+    map_dir = Rails.root.join("public/" + Rails.configuration.assets.prefix, "source_maps", rel_path)
+    map_dir.mkpath
+
+    map_file    = map_dir.join("#{clean_name}.map")
+    ki_file = map_dir.join("#{clean_name}.js.ki")
+
+    # the ki compiler includes the sourceMappingURL comment itself,
+    # but it requires a correct 'mapfile' argument.
+    ret = _ki_compile(source, macros_source,
+                      :filename => "/" + ki_file.relative_path_from(Rails.root.join("public")).to_s,
+                      :mapfile =>  "/" + map_file.relative_path_from(Rails.root.join("public")).to_s)
+
+    begin
+      # write source map + original code, if we can.
+      map_file.open('w') {|f| f.puts ret[:sourceMap]}
+      ki_file.open('w')  {|f| f.puts source }
+    rescue Errno::EACCESS
+      # we won't have sourcemaps if we can't write them, but it's no reason
+      # to crash the app.
+    end
+
+    return ret[:code]
+  end
+
+  private
+
+  def escape(input)
+    MultiJson.dump(input)
+  end
+
+  def _ki_compile(source, macros_source, options = {})
+    js = []
+    js << "var sweet = __modules.sweet;"
+    js << "var ki = __modules.ki;"
+    js << "var options = {};"
+    js << "var source = #{MultiJson.dump(source)};"
+    js << "options.modules = sweet.loadModule(ki.joinModule(#{escape(macros_source)}, #{escape(@ki_core)}));"
+
+    if options[:filename] && options[:mapfile]
+      js << "options.filename = #{escape(options[:filename])};"
+      js << "options.mapfile = #{escape(options[:mapfile])};"
+      js << "options.sourceMap = true;"
+    else
+    end
+
+    js << "ki.compile(source, options);"
+    @context.eval js.join("\n")
+  end
+
   def normalize_spec(spec)
     return spec if spec.start_with? "text!"
     spec.gsub(/\.\//, '')
@@ -172,103 +300,6 @@ class KiCompiler
     }
   end
 
-  def initialize
-    context = V8::Context.new
-
-    context.eval %Q{
-      this.__modules = {};
-      this.__loaded = {};
-      this.__specs = {};
-      this.__texts = {};
-      this.__define = function (name, deps, factory) {
-        __specs[name] = ({ deps: deps, factory: factory });
-      }
-    }
-
-    parse(context, "ki")
-    round = 1
-    spec_count = context.eval("this.__specs").count
-
-    while true do
-      parse_step(context)
-
-      new_spec_count = context.eval("this.__specs").count
-      break if new_spec_count == spec_count
-      spec_count = new_spec_count
-
-      puts "\n========== Round #{round} ==============="
-      print_specs(context)
-      round = round + 1
-    end
-
-    puts "Should now bless all those specs."
-
-    context.eval %Q{
-      Object.keys(this.__specs).forEach(function (name) {
-        __modules[name] = {};
-      });
-    }
-
-    bless(context, "ki")
-
-    # load source map support too.
-    context.eval(%Q{
-        this.window = this;
-                 })
-
-    context.load(resource_path("source-map.js"));
-
-    context.eval(%Q{
-        delete this.window;
-                 })
-
-    @ki_core = File.read(resource_path("ki.sjs"))
-    @context = context
-  end
-
-  def compile(source, options = {})
-    pathname = options[:pathname]
-    if pathname.nil?
-      ret = @context.eval %Q{
-        __modules.ki.compile(#{MultiJson.dump(source)},
-                {filename: "#{pathname || ''}",
-                 ki_core: #{MultiJson.dump(@ki_core)}})
-      }
-
-      return ret[:code]
-    else
-      clean_name = pathname.basename.to_s.split(".").first
-
-      rel_path = if pathname.to_s.start_with?(Bundler.bundle_path.to_s)
-                   Pathname('bundler').join(pathname.relative_path_from(Bundler.bundle_path)).dirname
-                 else
-                   pathname.relative_path_from(Rails.root).dirname
-                 end
-
-      map_dir = Rails.root.join("public/" + Rails.configuration.assets.prefix, "source_maps", rel_path)
-      map_dir.mkpath
-
-      map_file    = map_dir.join("#{clean_name}.map")
-      ki_file = map_dir.join("#{clean_name}.js.ki")
-
-      ret = @context.eval %Q{
-        __modules.ki.compile(#{MultiJson.dump(source)},
-          {filename: #{MultiJson.dump("/" + ki_file.relative_path_from(Rails.root.join("public")).to_s)},
-          sourceMap: true,
-          mapfile: #{MultiJson.dump("/" + map_file.relative_path_from(Rails.root.join("public")).to_s)},
-          ki_core: #{MultiJson.dump(@ki_core)}})}
-
-      begin
-        map_file.open('w')    {|f| f.puts ret[:sourceMap]}
-        ki_file.open('w') {|f| f.puts source }
-      rescue Errno::EACCESS
-        # we won't have sourcemaps if we can't write them, but it's no reason
-        # to crash the app.
-      end
-
-      return ret[:code]
-    end
-  end
 
 end
 
