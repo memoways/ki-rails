@@ -214,13 +214,13 @@ class KiCompiler
     # load source map support too.
     context.eval(%Q{
         this.window = this;
-    })
+                 })
 
     context.load(resource_path("source-map.js"));
 
     context.eval(%Q{
         delete this.window;
-    })
+                 })
 
     macros_source = File.read(resource_path("ki.sjs"))
 
@@ -228,7 +228,7 @@ class KiCompiler
         var ki = __modules['ki'];
         var sweet = __modules['sweet'];
         this.__ki_modules = sweet.loadModule(#{MultiJson.dump(macros_source)});
-    })
+                 })
 
     @context = context
   end
@@ -255,15 +255,20 @@ class KiCompiler
 
       map_file    = map_dir.join("#{clean_name}.map")
       ki_file = map_dir.join("#{clean_name}.js.ki")
-      
+
       ret = @context.eval %Q{__modules.ki.compile(#{MultiJson.dump(source)},
         {filename: #{MultiJson.dump("/" + ki_file.relative_path_from(Rails.root.join("public")).to_s)},
         sourceMap: true,
         mapfile: #{MultiJson.dump("/" + map_file.relative_path_from(Rails.root.join("public")).to_s)},
         modules: __ki_modules})}
 
-      ki_file.open('w') {|f| f.puts source }
-      map_file.open('w')    {|f| f.puts ret[:sourceMap]}
+      begin
+        map_file.open('w')    {|f| f.puts ret[:sourceMap]}
+        ki_file.open('w') {|f| f.puts source }
+      rescue Errno::EACCESS
+        # we won't have sourcemaps if we can't write them, but it's no reason
+        # to crash the app.
+      end
 
       return ret[:code]
     end
