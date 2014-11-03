@@ -222,12 +222,7 @@ class KiCompiler
         delete this.window;
                  })
 
-    macros_source = File.read(resource_path("ki.sjs"))
-
-    context.eval(%Q{
-        this.__ki_modules = __modules.sweet.loadModule(#{MultiJson.dump(macros_source)});
-    })
-
+    @ki_core = File.read(resource_path("ki.sjs"))
     @context = context
   end
 
@@ -235,10 +230,9 @@ class KiCompiler
     pathname = options[:pathname]
     if pathname.nil?
       ret = @context.eval %Q{
-        var modules = __modules.sweet.loadModule(__modules.ki.parseMacros(#{MultiJson.dump(source)}));
         __modules.ki.compile(#{MultiJson.dump(source)},
                 {filename: "#{pathname || ''}",
-                 modules: [__ki_modules, modules]})
+                 ki_core: #{MultiJson.dump(@ki_core)}})
       }
 
       return ret[:code]
@@ -258,12 +252,11 @@ class KiCompiler
       ki_file = map_dir.join("#{clean_name}.js.ki")
 
       ret = @context.eval %Q{
-        var modules = __modules.sweet.loadModule(__modules.ki.parseMacros(#{MultiJson.dump(source)}));
         __modules.ki.compile(#{MultiJson.dump(source)},
           {filename: #{MultiJson.dump("/" + ki_file.relative_path_from(Rails.root.join("public")).to_s)},
           sourceMap: true,
           mapfile: #{MultiJson.dump("/" + map_file.relative_path_from(Rails.root.join("public")).to_s)},
-          modules: [__ki_modules, modules]})}
+          ki_core: #{MultiJson.dump(@ki_core)}})}
 
       begin
         map_file.open('w')    {|f| f.puts ret[:sourceMap]}
