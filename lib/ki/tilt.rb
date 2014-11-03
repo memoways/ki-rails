@@ -13,7 +13,8 @@ module Ki
       end
 
       def evaluate(scope, locals, &block)
-        compiler.compile(data)
+        pathname = scope.respond_to?(:pathname) ? scope.pathname : nil
+        compiler.compile(data, :pathname => pathname) + "\n"
       end
     end
   end

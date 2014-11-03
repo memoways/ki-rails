@@ -211,6 +211,17 @@ class KiCompiler
 
     bless(context, "ki")
 
+    # load source map support too.
+    context.eval(%Q{
+        this.window = this;
+    })
+
+    context.load(resource_path("source-map.js"));
+
+    context.eval(%Q{
+        delete this.window;
+    })
+
     macros_source = File.read(resource_path("ki.sjs"))
 
     context.eval(%Q{
@@ -222,13 +233,40 @@ class KiCompiler
     @context = context
   end
 
-  def compile(source, filename = "")
-    @context.eval %Q{
-      __modules.ki.compile(
-        #{MultiJson.dump(source)},
-      {filename: "#{filename}",
-       modules: __ki_modules}).code
-    }
+  def compile(source, options = {})
+    pathname = options[:pathname]
+    if pathname.nil?
+      ret = @context.eval %Q{__modules.ki.compile(#{MultiJson.dump(source)},
+        {filename: "#{pathname || ''}",
+        modules: __ki_modules})}
+
+      return ret[:code]
+    else
+      clean_name = pathname.basename.to_s.split(".").first
+
+      rel_path = if pathname.to_s.start_with?(Bundler.bundle_path.to_s)
+                   Pathname('bundler').join(pathname.relative_path_from(Bundler.bundle_path)).dirname
+                 else
+                   pathname.relative_path_from(Rails.root).dirname
+                 end
+
+      map_dir = Rails.root.join("public/" + Rails.configuration.assets.prefix, "source_maps", rel_path)
+      map_dir.mkpath
+
+      map_file    = map_dir.join("#{clean_name}.map")
+      ki_file = map_dir.join("#{clean_name}.js.ki")
+      
+      ret = @context.eval %Q{__modules.ki.compile(#{MultiJson.dump(source)},
+        {filename: #{MultiJson.dump("/" + ki_file.relative_path_from(Rails.root.join("public")).to_s)},
+        sourceMap: true,
+        mapfile: #{MultiJson.dump("/" + map_file.relative_path_from(Rails.root.join("public")).to_s)},
+        modules: __ki_modules})}
+
+      ki_file.open('w') {|f| f.puts source }
+      map_file.open('w')    {|f| f.puts ret[:sourceMap]}
+
+      return ret[:code]
+    end
   end
 
 end
