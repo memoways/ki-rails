@@ -225,10 +225,8 @@ class KiCompiler
     macros_source = File.read(resource_path("ki.sjs"))
 
     context.eval(%Q{
-        var ki = __modules['ki'];
-        var sweet = __modules['sweet'];
-        this.__ki_modules = sweet.loadModule(#{MultiJson.dump(macros_source)});
-                 })
+        this.__ki_modules = __modules.sweet.loadModule(#{MultiJson.dump(macros_source)});
+    })
 
     @context = context
   end
@@ -236,9 +234,12 @@ class KiCompiler
   def compile(source, options = {})
     pathname = options[:pathname]
     if pathname.nil?
-      ret = @context.eval %Q{__modules.ki.compile(#{MultiJson.dump(source)},
-        {filename: "#{pathname || ''}",
-        modules: __ki_modules})}
+      ret = @context.eval %Q{
+        var modules = __modules.sweet.loadModule(__modules.ki.parseMacros(#{MultiJson.dump(source)}));
+        __modules.ki.compile(#{MultiJson.dump(source)},
+                {filename: "#{pathname || ''}",
+                 modules: [__ki_modules, modules]})
+      }
 
       return ret[:code]
     else
@@ -256,11 +257,13 @@ class KiCompiler
       map_file    = map_dir.join("#{clean_name}.map")
       ki_file = map_dir.join("#{clean_name}.js.ki")
 
-      ret = @context.eval %Q{__modules.ki.compile(#{MultiJson.dump(source)},
-        {filename: #{MultiJson.dump("/" + ki_file.relative_path_from(Rails.root.join("public")).to_s)},
-        sourceMap: true,
-        mapfile: #{MultiJson.dump("/" + map_file.relative_path_from(Rails.root.join("public")).to_s)},
-        modules: __ki_modules})}
+      ret = @context.eval %Q{
+        var modules = __modules.sweet.loadModule(__modules.ki.parseMacros(#{MultiJson.dump(source)}));
+        __modules.ki.compile(#{MultiJson.dump(source)},
+          {filename: #{MultiJson.dump("/" + ki_file.relative_path_from(Rails.root.join("public")).to_s)},
+          sourceMap: true,
+          mapfile: #{MultiJson.dump("/" + map_file.relative_path_from(Rails.root.join("public")).to_s)},
+          modules: [__ki_modules, modules]})}
 
       begin
         map_file.open('w')    {|f| f.puts ret[:sourceMap]}
