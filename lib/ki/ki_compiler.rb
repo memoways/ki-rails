@@ -2,6 +2,7 @@
 
 require 'therubyracer'
 require 'multi_json'
+require 'digest/sha1'
 
 class KiCompiler
 
@@ -13,6 +14,7 @@ class KiCompiler
       this.__loaded = {};
       this.__specs = {};
       this.__texts = {};
+      this.__macrocache = {};
       this.__define = function (name, deps, factory) {
         __specs[name] = ({ deps: deps, factory: factory });
       }
@@ -114,13 +116,30 @@ class KiCompiler
     MultiJson.dump(input)
   end
 
+  def digest(input)
+    Digest::SHA1.hexdigest input
+  end
+
   def _ki_compile(source, macros_source, options = {})
+    macros = @context.eval %Q{__modules.ki.parseMacros(#{escape(macros_source)})}
+    macros_digest = digest(macros);
+    puts "Macros digest #{macros_digest} for #{options[:filename]}"
+
     js = []
     js << "var sweet = __modules.sweet;"
     js << "var ki = __modules.ki;"
     js << "var options = {};"
-    js << "var source = #{MultiJson.dump(source)};"
-    js << "options.modules = sweet.loadModule(ki.joinModule(#{escape(macros_source)}, #{escape(@ki_core)}));"
+    js << "var source = #{escape(source)};"
+
+    if @context.eval %Q{!!__macrocache[#{escape(macros_digest)}]}
+      puts "Cache hit!!!"
+      js << "options.modules = __macrocache[#{escape(macros_digest)}];"
+    else
+      puts "Cache miss :("
+      js << "var modules = sweet.loadModule(ki.joinModule(#{escape(macros_source)}, #{escape(@ki_core)}));"
+      js << "__macrocache[#{escape(macros_digest)}] = modules;"
+      js << "options.modules = modules;"
+    end
 
     if options[:filename] && options[:mapfile]
       js << "options.filename = #{escape(options[:filename])};"
