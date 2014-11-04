@@ -84,23 +84,21 @@ module Ki
       }
 
       if mod[:factory].nil?
-        # non-AMD modules workaround
-        case spec.name
-        when 'underscore'
-          debug "Underscore workaround."
-          @context.eval "$kir.modules[#{escape(spec.name)}].exports = this._;"
-        end
+        debug "#{spec.name} doesn't look AMD-ready."
 
-        # in any case, we have no factory to run.
+        # we have no factory to run.
         return
       end
 
       js = []
       js << "var deps = ["
 
+      uses_exports = false
+
       mod[:deps].each do |dep|
         dep_spec = parse_spec(dep)
         if dep_spec.exports?
+          uses_exports = true
           js << "$kir.modules[#{escape(spec.name)}].exports, "
         else
           debug "#{spec.name} => #{dep_spec.name}"
@@ -112,7 +110,14 @@ module Ki
       end
       js << "];"
 
-      js << "$kir.modules[#{escape(spec.name)}].factory.apply(null, deps);"
+      js << "var result = $kir.modules[#{escape(spec.name)}].factory.apply(null, deps);"
+
+      # not requesting 'exports' and just returning an object
+      # is valid AMD apparently. It won't work with circular 
+      # references but whatever.
+      unless uses_exports
+        js << "$kir.modules[#{escape(spec.name)}].exports = result;"
+      end
 
       # actually call the factory!
       debug "Calling the factory of #{spec.name}"
