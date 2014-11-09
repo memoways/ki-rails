@@ -7,7 +7,7 @@ Gem::Specification.new do |s|
   s.platform    = Gem::Platform::RUBY
   s.authors     = ["Amos Wenger"]
   s.email       = ["amos@lockfree.ch"]
-  s.homepage    = "https://github.com/fasterthanlime/ki-rails"
+  s.homepage    = "https://github.com/memoways/ki-rails"
   s.summary     = %q{Ki adapter for the Rails asset pipeline.}
   s.description = %q{Ki adapter for the Rails asset pipeline.}
 
